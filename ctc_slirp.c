@@ -305,6 +305,22 @@ static ssize_t ctcis_send_packet( const void* pkt, size_t pkt_len, void* opaque 
     return (ssize_t)pkt_len;
 }
 
+/* No-op stubs for libslirp register/unregister callbacks.
+   Required by libslirp >= 4.8 which unconditionally calls these
+   when setting up host-forwarded listening sockets.  CTCIS uses its
+   own poll loop so the stubs are intentionally empty.               */
+static void ctcis_register_poll_fd( int fd, void* opaque )
+{
+    UNREFERENCED( fd );
+    UNREFERENCED( opaque );
+}
+
+static void ctcis_unregister_poll_fd( int fd, void* opaque )
+{
+    UNREFERENCED( fd );
+    UNREFERENCED( opaque );
+}
+
 static SlirpCb ctcis_slirp_cb =
 {
     .send_packet = ctcis_send_packet,
@@ -313,6 +329,8 @@ static SlirpCb ctcis_slirp_cb =
     .timer_new_opaque = ctcis_timer_new,
     .timer_free = ctcis_timer_free,
     .timer_mod = ctcis_timer_mod,
+    .register_poll_fd = ctcis_register_poll_fd,
+    .unregister_poll_fd = ctcis_unregister_poll_fd,
     .notify = ctcis_notify
 };
 
