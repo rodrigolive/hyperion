@@ -450,6 +450,7 @@
 #define CTC_CTCI                2       /* CTC link to TCP/IP stack  */
 #define CTC_PTP                 3       /* PTP link to TCP/IP stack  */
 #define CTC_CTCE                4       /* Enhanced CTC link via TCP */
+#define CTC_CTCIS               5       /* CTCI via libslirp         */
 #define CTC_CTCT                6       /* CTC link via TCP          */
 
 #define CTCE_TRACE_ON          -1       /* CTCE permanent tracing on */

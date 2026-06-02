@@ -606,6 +606,7 @@ AH_TEMPLATE( [HAVE_ZLIB],               [Define to enable zlib compression in em
 AH_TEMPLATE( [CCKD_BZIP2],              [Define to enable bzip2 compression in emulated DASDs] )
 AH_TEMPLATE( [HET_BZIP2],               [Define to enable bzip2 compression in emulated tapes] )
 AH_TEMPLATE( [OPTION_CAPABILITIES],     [Define to enable posix draft 1003.1e capabilities] )
+AH_TEMPLATE( [OPTION_SLIRP],            [Define to enable libslirp CTCIS support] )
 AH_TEMPLATE( [HAVE_OBJECT_REXX],        [Define to enable OORexx support] )
 AH_TEMPLATE( [HAVE_REGINA_REXX],        [Define to enable Regina Rexx support] )
 AH_TEMPLATE( [ENABLE_IPV6],             [Define to enable IPV6 support] )
@@ -2311,6 +2312,73 @@ AC_ARG_ENABLE( ipv6,
     [hc_cv_ena_ipv6=yes]
 )
 
+AC_ARG_ENABLE( slirp,
+
+    AC_HELP_STRING( [--enable-slirp],
+
+        [enable CTCIS userspace NAT networking using libslirp]
+    ),
+    [
+        case "${enableval}" in
+        yes) hc_cv_ena_slirp=required                    ;;
+        no)  hc_cv_ena_slirp=no                          ;;
+        *)   AC_MSG_RESULT( [ERROR: invalid 'slirp' option] )
+             hc_error=yes
+             hc_cv_ena_slirp=no
+             ;;
+        esac
+    ],
+    [hc_cv_ena_slirp=auto]
+)
+
+SLIRP_CFLAGS=
+SLIRP_LIBS=
+hc_cv_have_slirp=no
+
+if test "$hc_cv_ena_slirp" != "no"; then
+
+    AC_PATH_PROG( [PKG_CONFIG], [pkg-config] )
+
+    if test "x$PKG_CONFIG" != "x"; then
+        AC_MSG_CHECKING( [for libslirp with pkg-config] )
+
+        if $PKG_CONFIG --atleast-version=4.0.0 libslirp >/dev/null 2>&1; then
+            hc_cv_have_slirp=yes
+            hc_cv_slirp_pc=libslirp
+        elif $PKG_CONFIG --atleast-version=4.0.0 slirp >/dev/null 2>&1; then
+            hc_cv_have_slirp=yes
+            hc_cv_slirp_pc=slirp
+        else
+            hc_cv_have_slirp=no
+            hc_cv_slirp_pc=
+        fi
+
+        if test "$hc_cv_have_slirp" = "yes"; then
+            AC_MSG_RESULT( [$hc_cv_slirp_pc] )
+            SLIRP_CFLAGS=`$PKG_CONFIG --cflags $hc_cv_slirp_pc`
+            SLIRP_LIBS=`$PKG_CONFIG --libs $hc_cv_slirp_pc`
+
+            hc_temp_CPPFLAGS="$CPPFLAGS"
+            CPPFLAGS="$CPPFLAGS $SLIRP_CFLAGS"
+            AC_CHECK_HEADERS( [slirp/libslirp.h libslirp.h], [break] )
+            CPPFLAGS="$hc_temp_CPPFLAGS"
+        else
+            AC_MSG_RESULT( [not found] )
+        fi
+    else
+        AC_MSG_NOTICE( [pkg-config not found; libslirp disabled] )
+    fi
+
+    if test "$hc_cv_have_slirp" != "yes" &&
+       test "$hc_cv_ena_slirp" = "required"; then
+        AC_MSG_RESULT( [ERROR: --enable-slirp specified but libslirp >= 4.0.0 was not found by pkg-config] )
+        hc_error=yes
+    fi
+fi
+
+AC_SUBST(SLIRP_CFLAGS)
+AC_SUBST(SLIRP_LIBS)
+
 AC_ARG_ENABLE( cckd-bzip2,
 
     AC_HELP_STRING( [--enable-cckd-bzip2],
@@ -3021,7 +3089,8 @@ test "$hc_cv_have_u_int8_t"               = "yes"  &&  AC_DEFINE(HAVE_U_INT)
 test "$hc_cv_opt_enhanced_configincludes" = "yes"  &&  AC_DEFINE(OPTION_ENHANCED_CONFIG_INCLUDE)
 test "$hc_cv_opt_auto_oper"               = "yes"  &&  AC_DEFINE(OPTION_HAO)
 test "$hc_cv_opt_fthreads"                = "yes"  &&  AC_DEFINE(OPTION_FTHREADS)
-test "$hc_cv_have_lt_dlopen"              = "yes"  &&  AC_DEFINE(HDL_USE_LIBTOOL)
+test "$hc_cv_have_lt_dlopen"              = "yes"  &&
+test "$hc_cv_have_ltdl_h"                 = "yes"  &&  AC_DEFINE(HDL_USE_LIBTOOL)
 test "$hc_cv_is_windows"                  = "yes"  &&  AC_DEFINE(WIN32)
 test "$hc_cv_have_libz"                   = "yes"  &&  AC_DEFINE(HAVE_ZLIB)
 test "$hc_cv_opt_cckd_bzip2"              = "yes"  &&  AC_DEFINE(CCKD_BZIP2)
@@ -3037,6 +3106,7 @@ test "$hc_cv_opt_capabilities"            = "yes"  &&  AC_DEFINE(OPTION_CAPABILI
 test "$hc_cv_ena_object_rexx"             = "yes"  &&  AC_DEFINE(HAVE_OBJECT_REXX)
 test "$hc_cv_ena_regina_rexx"             = "yes"  &&  AC_DEFINE(HAVE_REGINA_REXX)
 test "$hc_cv_ena_ipv6"                    = "yes"  &&  AC_DEFINE(ENABLE_IPV6)
+test "$hc_cv_have_slirp"                  = "yes"  &&  AC_DEFINE(OPTION_SLIRP)
 test "$hc_cv_have_full_keepalive"         = "yes"  &&  AC_DEFINE(HAVE_FULL_KEEPALIVE)
 test "$hc_cv_have_partial_keepalive"      = "yes"  &&  AC_DEFINE(HAVE_PARTIAL_KEEPALIVE)
 test "$hc_cv_have_basic_keepalive"        = "yes"  &&  AC_DEFINE(HAVE_BASIC_KEEPALIVE)
@@ -3159,6 +3229,7 @@ AC_CACHE_SAVE()
 AM_CONDITIONAL( BUILD_FTHREADS,      [ test "$hc_cv_opt_fthreads"     = "yes" ] )
 AM_CONDITIONAL( BUILD_HERCIFC,       [ test "$hc_cv_build_hercifc"    = "yes" ] )
 AM_CONDITIONAL( OPTION_CAPABILITIES, [ test "$hc_cv_opt_capabilities" = "yes" ] )
+AM_CONDITIONAL( OPTION_SLIRP,        [ test "$hc_cv_have_slirp"       = "yes" ] )
 AM_CONDITIONAL( SETUID_HERCIFC,      [ test "$hc_cv_setuid_hercifc"   = "yes" ] )
 AM_CONDITIONAL( HERCIFC_GROUPSET,    [ test "x$hc_cv_hercifc_groupname" != "x"] )
 
@@ -3329,28 +3400,28 @@ END
 fi
 
 LIBS="$LIBS -l${crypto_pkgname}${hc_cv_pkg_lib_suffix}"
-if test -z "${hc_cv_pkg_lib_subdir}"; then
+if test -z "${hc_cv_pkg_lib_subdir}" || test ! -d "${crypto_libdir}${hc_cv_pkg_lib_subdir}"; then
   LDFLAGS="$LDFLAGS -L${crypto_libdir}"
 else
   LDFLAGS="$LDFLAGS -L${crypto_libdir}${hc_cv_pkg_lib_subdir}"
 fi
 
 LIBS="$LIBS -l${decnumber_pkgname}${hc_cv_pkg_lib_suffix}"
-if test -z "${hc_cv_pkg_lib_subdir}"; then
+if test -z "${hc_cv_pkg_lib_subdir}" || test ! -d "${decnumber_libdir}${hc_cv_pkg_lib_subdir}"; then
   LDFLAGS="$LDFLAGS -L${decnumber_libdir}"
 else
   LDFLAGS="$LDFLAGS -L${decnumber_libdir}${hc_cv_pkg_lib_subdir}"
 fi
 
 LIBS="$LIBS -l${softfloat_pkgname}${hc_cv_pkg_lib_suffix}"
-if test -z "${hc_cv_pkg_lib_subdir}"; then
+if test -z "${hc_cv_pkg_lib_subdir}" || test ! -d "${softfloat_libdir}${hc_cv_pkg_lib_subdir}"; then
   LDFLAGS="$LDFLAGS -L${softfloat_libdir}"
 else
   LDFLAGS="$LDFLAGS -L${softfloat_libdir}${hc_cv_pkg_lib_subdir}"
 fi
 
 LIBS="$LIBS -l${telnet_pkgname}${hc_cv_pkg_lib_suffix}"
-if test -z "${hc_cv_pkg_lib_subdir}"; then
+if test -z "${hc_cv_pkg_lib_subdir}" || test ! -d "${telnet_libdir}${hc_cv_pkg_lib_subdir}"; then
   LDFLAGS="$LDFLAGS -L${telnet_libdir}"
 else
   LDFLAGS="$LDFLAGS -L${telnet_libdir}${hc_cv_pkg_lib_subdir}"

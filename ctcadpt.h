@@ -137,6 +137,20 @@ extern void     CTCI_Write( DEVBLK* pDEVBLK,   U32   sCount,
                             BYTE*   pIOBuf,    BYTE* UnitStat,
                             U32*    pResidual );
 
+#if defined( OPTION_SLIRP )
+extern DEVHND   ctcis_device_hndinfo;
+extern int      CTCIS_Init( DEVBLK* pDEVBLK, int argc, char *argv[] );
+extern int      CTCIS_Close( DEVBLK* pDEVBLK );
+extern void     CTCIS_Query( DEVBLK* pDEVBLK, char** ppszClass,
+                             int     iBufLen, char*  pBuffer );
+extern void     CTCIS_ExecuteCCW( DEVBLK* pDEVBLK, BYTE  bCode,
+                                  BYTE    bFlags,  BYTE  bChained,
+                                  U32     sCount,  BYTE  bPrevCode,
+                                  int     iCCWSeq, BYTE* pIOBuf,
+                                  BYTE*   pMore,   BYTE* pUnitStat,
+                                  U32*    pResidual );
+#endif
+
 extern int      LCS_Init( DEVBLK* pDEVBLK, int argc, char *argv[] );
 extern int      LCS_Close( DEVBLK* pDEVBLK );
 extern void     LCS_Query( DEVBLK* pDEVBLK, char** ppszClass,
