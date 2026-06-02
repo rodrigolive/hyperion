@@ -12,6 +12,8 @@ extpkg_incdirs = @EXTPKG_INCDIRS@
 extpkg_headers = @EXTPKG_HEADERS@
 extpkg_ldadd   = @EXTPKG_LDADD@
 hqa_inc        = @HQA_INC@
+slirp_cflags   = @SLIRP_CFLAGS@
+slirp_libs     = @SLIRP_LIBS@
 lns            = @LN_S@
 ldadd          = @LIBS@
 
@@ -114,6 +116,7 @@ dyndev_SRC =  \
   ctc_ctci.c  \
   ctc_lcs.c   \
   ctc_ptp.c   \
+  ctc_slirp.c  \
   ctcadpt.c   \
   faketape.c  \
   ftlib.c     \
@@ -261,6 +264,11 @@ bin_PROGRAMS = \
 
 EXTRA_PROGRAMS = hercifc
 
+if OPTION_SLIRP
+check_PROGRAMS = ctc_slirp_test
+TESTS = ctc_slirp_test
+endif
+
 #----------------------------------------------------------------------------
 # For each module:
 #
@@ -302,9 +310,14 @@ hdt3705_la_SOURCES  = comm3705.c
 hdt3705_la_LDFLAGS  = $(DYNMOD_LD_FLAGS)
 hdt3705_la_LIBADD   = $(DYNMOD_LD_ADD)
 
-hdt3088_la_SOURCES  = ctc_lcs.c ctc_ctci.c ctcadpt.c tuntap.c netsupp.c
+hdt3088_la_SOURCES  = ctc_lcs.c ctc_ctci.c ctc_slirp.c ctcadpt.c tuntap.c netsupp.c
+hdt3088_la_CPPFLAGS = $(AM_CPPFLAGS) $(slirp_cflags)
 hdt3088_la_LDFLAGS  = $(DYNMOD_LD_FLAGS)
-hdt3088_la_LIBADD   = $(DYNMOD_LD_ADD)
+hdt3088_la_LIBADD   = $(DYNMOD_LD_ADD) $(slirp_libs)
+
+ctc_slirp_test_SOURCES = ctc_slirp_test.c
+ctc_slirp_test_CPPFLAGS = $(AM_CPPFLAGS) $(slirp_cflags)
+ctc_slirp_test_LDADD = $(slirp_libs)
 
 hdt3270_la_SOURCES  = console.c
 hdt3270_la_LDFLAGS  = $(DYNMOD_LD_FLAGS)
@@ -1348,7 +1361,6 @@ endif
 	@echo '  $$tapetools_ADDLIBS   $(tapetools_ADDLIBS)'
 	@echo '  $$tools_LD_FLAGS      $(tools_LD_FLAGS)'
 	@echo '  $$XSTATIC             $(XSTATIC)'
-
 
 
 

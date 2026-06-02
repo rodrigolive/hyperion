@@ -7941,6 +7941,9 @@ HDL_DEVICE_SECTION;
 // ZZ their own loadable modules
 
     HDL_DEVICE( CTCI, ctci_device_hndinfo );
+#if defined( OPTION_SLIRP )
+    HDL_DEVICE( CTCIS, ctcis_device_hndinfo );
+#endif
     HDL_DEVICE( CTCT, ctct_device_hndinfo );
     HDL_DEVICE( CTCE, ctce_device_hndinfo );
 }
