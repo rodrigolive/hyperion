@@ -90,49 +90,79 @@ char   *buf1;                           /* Pointer to resolved buffer*/
             if (stmtlen == 0)
                 memset(buf, 0, buflen); // clear work area
 
-            /* Read character from configuration file */
-            c = fgetc(fp);
-
-            /* Check for I/O error */
-            if (ferror(fp))
+            for (;;)
             {
-                WRMSG(HHC01432, "S", *inc_stmtnum, fname, "fgetc()", strerror(errno));
-                return -1;
+                /* Read character from configuration file */
+                c = fgetc(fp);
+
+                /* Check for I/O error */
+                if (ferror(fp))
+                {
+                    WRMSG(HHC01432, "S", *inc_stmtnum, fname, "fgetc()", strerror(errno));
+                    return -1;
+                }
+
+                /* Check for end of file */
+                if (stmtlen == 0 && (c == EOF || c == '\x1A'))
+                    return -1;
+
+                /* Check for end of line */
+                if (c == '\n' || c == EOF || c == '\x1A')
+                    break;
+
+                /* Ignore nulls and carriage returns */
+                if (c == '\0' || c == '\r') continue;
+
+                /* Check if it is a white space and no other character yet */
+                if(!lstarted && isspace(c)) continue;
+                lstarted=1;
+
+                /* Check that statement does not overflow buffer */
+                if (stmtlen >= buflen - 1)
+                {
+                    WRMSG(HHC01433, "S", *inc_stmtnum, fname);
+                    return -1;
+                }
+
+                /* Append character to buffer */
+                buf[stmtlen++] = c;
+
+            } /* end for(;;) */
+
+            /* Null terminate the buffer */
+            buf[ stmtlen ] = 0;
+
+            /* Remove trailing whitespace */
+            RTRIM( buf );
+            stmtlen = (int) strlen( buf );
+
+            /* Backslash at end of line continues the statement. */
+            if (stmtlen != 0 && buf[stmtlen - 1] == '\\')
+            {
+                buf[--stmtlen] = 0;
+                RTRIM( buf );
+                stmtlen = (int) strlen( buf );
+
+                if (c != EOF && c != '\x1A')
+                {
+                    if (stmtlen >= buflen - 2)
+                    {
+                        WRMSG(HHC01433, "S", *inc_stmtnum, fname);
+                        return -1;
+                    }
+
+                    buf[stmtlen++] = ' ';
+                    buf[stmtlen] = 0;
+                    lstarted = 0;
+
+                    /* Account for the next physical line. */
+                    (*inc_stmtnum)++;
+                    continue;
+                }
             }
 
-            /* Check for end of file */
-            if (stmtlen == 0 && (c == EOF || c == '\x1A'))
-                return -1;
-
-            /* Check for end of line */
-            if (c == '\n' || c == EOF || c == '\x1A')
-                break;
-
-            /* Ignore nulls and carriage returns */
-            if (c == '\0' || c == '\r') continue;
-
-            /* Check if it is a white space and no other character yet */
-            if(!lstarted && isspace(c)) continue;
-            lstarted=1;
-
-            /* Check that statement does not overflow buffer */
-            if (stmtlen >= buflen - 1)
-            {
-                WRMSG(HHC01433, "S", *inc_stmtnum, fname);
-                return -1;
-            }
-
-            /* Append character to buffer */
-            buf[stmtlen++] = c;
-
+            break;
         } /* end for(stmtlen) */
-
-        /* Null terminate the buffer */
-        buf[ stmtlen ] = 0;
-
-        /* Remove trailing whitespace */
-        RTRIM( buf );
-        stmtlen = (int) strlen( buf );
 
         set_symbol("CUU","$(CUU)");
         set_symbol("CCUU","$(CCUU)");
