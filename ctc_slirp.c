@@ -67,6 +67,10 @@ struct _CTCISBLK
     u_int           fReadWaiting:1;
     u_int           fHaltOrClear:1;
 
+    FILE*           logfp;
+    int             loglevel;
+    char            logpath[PATH_MAX + 1];
+
     Slirp*          slirp;
     CTCISTIMER*     timers;
 
@@ -145,6 +149,157 @@ static int64_t ctcis_clock_get_ns( void* opaque )
 {
     UNREFERENCED( opaque );
     return ctcis_now_ms() * 1000000;
+}
+
+/*-------------------------------------------------------------------*/
+/* JSON traffic logging helpers                                      */
+/*-------------------------------------------------------------------*/
+
+static void ctcis_log_ts( char* buf, size_t bufsz )
+{
+    struct timeval tv;
+    struct tm tm;
+    gettimeofday( &tv, NULL );
+    gmtime_r( &tv.tv_sec, &tm );
+    snprintf( buf, bufsz, "%04d-%02d-%02dT%02d:%02d:%02d.%03dZ",
+              tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
+              tm.tm_hour, tm.tm_min, tm.tm_sec, (int)(tv.tv_usec / 1000) );
+}
+
+static void ctcis_log_event( PCTCISBLK blk, const char* json_body )
+{
+    char ts[32];
+
+    if (!blk->logfp || blk->loglevel < 1)
+        return;
+
+    ctcis_log_ts( ts, sizeof( ts ) );
+    fprintf( blk->logfp, "{\"ts\":\"%s\",%s}\n", ts, json_body );
+    fflush( blk->logfp );
+}
+
+static void ctcis_log_packet( PCTCISBLK blk, const char* dir,
+                              const BYTE* ip, size_t iplen )
+{
+    char ts[32];
+    char line[1024];
+    int pos;
+    U16 tot, sport, dport;
+    int ihl, proto;
+    char src[INET_ADDRSTRLEN], dst[INET_ADDRSTRLEN];
+    struct in_addr sa, da;
+
+    if (!blk->logfp || blk->loglevel < 2 || iplen < 20)
+        return;
+
+    ihl = (ip[0] & 0x0f) * 4;
+    tot = ((U16)ip[2] << 8) | ip[3];
+    proto = ip[9];
+    memcpy( &sa.s_addr, ip + 12, 4 );
+    memcpy( &da.s_addr, ip + 16, 4 );
+    STRLCPY( src, inet_ntoa( sa ) );
+    STRLCPY( dst, inet_ntoa( da ) );
+
+    ctcis_log_ts( ts, sizeof( ts ) );
+
+    if (proto == 6 && iplen >= (size_t)(ihl + 20))
+    {
+        /* TCP */
+        const BYTE* tcp = ip + ihl;
+        U32 seq, ack;
+        BYTE flags;
+        int datalen;
+        char flagstr[32];
+        int fpos = 0;
+
+        sport = ((U16)tcp[0] << 8) | tcp[1];
+        dport = ((U16)tcp[2] << 8) | tcp[3];
+        seq = ((U32)tcp[4] << 24) | ((U32)tcp[5] << 16) |
+              ((U32)tcp[6] << 8) | tcp[7];
+        ack = ((U32)tcp[8] << 24) | ((U32)tcp[9] << 16) |
+              ((U32)tcp[10] << 8) | tcp[11];
+        flags = tcp[13];
+        datalen = tot - ihl - ((tcp[12] >> 4) * 4);
+        if (datalen < 0) datalen = 0;
+
+        flagstr[0] = '\0';
+        if (flags & 0x02) fpos += snprintf( flagstr + fpos, sizeof( flagstr ) - fpos, "%sSYN", fpos ? "," : "" );
+        if (flags & 0x10) fpos += snprintf( flagstr + fpos, sizeof( flagstr ) - fpos, "%sACK", fpos ? "," : "" );
+        if (flags & 0x08) fpos += snprintf( flagstr + fpos, sizeof( flagstr ) - fpos, "%sPSH", fpos ? "," : "" );
+        if (flags & 0x01) fpos += snprintf( flagstr + fpos, sizeof( flagstr ) - fpos, "%sFIN", fpos ? "," : "" );
+        if (flags & 0x04) fpos += snprintf( flagstr + fpos, sizeof( flagstr ) - fpos, "%sRST", fpos ? "," : "" );
+        if (flags & 0x20) fpos += snprintf( flagstr + fpos, sizeof( flagstr ) - fpos, "%sURG", fpos ? "," : "" );
+        UNREFERENCED( fpos );
+
+        pos = snprintf( line, sizeof( line ),
+            "{\"ts\":\"%s\",\"ev\":\"pkt\",\"dir\":\"%s\",\"proto\":\"tcp\","
+            "\"src\":\"%s:%u\",\"dst\":\"%s:%u\","
+            "\"flags\":\"%s\",\"seq\":%u,\"ack\":%u,\"len\":%d",
+            ts, dir, src, sport, dst, dport, flagstr, seq, ack, datalen );
+
+        if (blk->loglevel >= 3 && datalen > 0)
+        {
+            int thlen = (tcp[12] >> 4) * 4;
+            const BYTE* payload = ip + ihl + thlen;
+            int plen = (int)iplen - ihl - thlen;
+            int i;
+            if (plen > datalen) plen = datalen;
+            if (plen > 256) plen = 256;
+            pos += snprintf( line + pos, sizeof( line ) - pos, ",\"data\":\"" );
+            for (i = 0; i < plen && pos + 3 < (int)sizeof( line ); i++)
+                pos += snprintf( line + pos, sizeof( line ) - pos, "%02x", payload[i] );
+            pos += snprintf( line + pos, sizeof( line ) - pos, "\"" );
+        }
+        snprintf( line + pos, sizeof( line ) - pos, "}" );
+    }
+    else if (proto == 17 && iplen >= (size_t)(ihl + 8))
+    {
+        /* UDP */
+        const BYTE* udp = ip + ihl;
+        int datalen;
+
+        sport = ((U16)udp[0] << 8) | udp[1];
+        dport = ((U16)udp[2] << 8) | udp[3];
+        datalen = tot - ihl - 8;
+        if (datalen < 0) datalen = 0;
+
+        pos = snprintf( line, sizeof( line ),
+            "{\"ts\":\"%s\",\"ev\":\"pkt\",\"dir\":\"%s\",\"proto\":\"udp\","
+            "\"src\":\"%s:%u\",\"dst\":\"%s:%u\",\"len\":%d",
+            ts, dir, src, sport, dst, dport, datalen );
+
+        if (blk->loglevel >= 3 && datalen > 0)
+        {
+            const BYTE* payload = ip + ihl + 8;
+            int plen = (int)iplen - ihl - 8;
+            int i;
+            if (plen > datalen) plen = datalen;
+            if (plen > 256) plen = 256;
+            pos += snprintf( line + pos, sizeof( line ) - pos, ",\"data\":\"" );
+            for (i = 0; i < plen && pos + 3 < (int)sizeof( line ); i++)
+                pos += snprintf( line + pos, sizeof( line ) - pos, "%02x", payload[i] );
+            pos += snprintf( line + pos, sizeof( line ) - pos, "\"" );
+        }
+        snprintf( line + pos, sizeof( line ) - pos, "}" );
+    }
+    else if (proto == 1 && iplen >= (size_t)(ihl + 8))
+    {
+        /* ICMP */
+        snprintf( line, sizeof( line ),
+            "{\"ts\":\"%s\",\"ev\":\"pkt\",\"dir\":\"%s\",\"proto\":\"icmp\","
+            "\"src\":\"%s\",\"dst\":\"%s\",\"icmp_type\":%u,\"icmp_code\":%u,\"len\":%u}",
+            ts, dir, src, dst, ip[ihl], ip[ihl + 1], (unsigned)(tot - ihl) );
+    }
+    else
+    {
+        snprintf( line, sizeof( line ),
+            "{\"ts\":\"%s\",\"ev\":\"pkt\",\"dir\":\"%s\",\"proto\":%d,"
+            "\"src\":\"%s\",\"dst\":\"%s\",\"len\":%u}",
+            ts, dir, proto, src, dst, (unsigned)tot );
+    }
+
+    fprintf( blk->logfp, "%s\n", line );
+    fflush( blk->logfp );
 }
 
 static void* ctcis_timer_new( SlirpTimerId id, void* cb_opaque, void* opaque )
@@ -348,6 +503,20 @@ static void ctcis_handle_arp( PCTCISBLK blk, const BYTE* pkt, size_t len )
     memcpy( reply + 32, arp + 8, 6 );     /* target MAC = requester MAC */
     memcpy( reply + 38, arp + 14, 4 );    /* target IP  = requester IP  */
 
+    if (blk->logfp)
+    {
+        char logbuf[128];
+        char guest[INET_ADDRSTRLEN];
+        STRLCPY( guest, inet_ntoa( blk->guest_addr ) );
+        snprintf( logbuf, sizeof( logbuf ),
+            "\"ev\":\"arp\",\"guest\":\"%s\","
+            "\"mac\":\"%02x:%02x:%02x:%02x:%02x:%02x\"",
+            guest,
+            blk->guest_mac[0], blk->guest_mac[1], blk->guest_mac[2],
+            blk->guest_mac[3], blk->guest_mac[4], blk->guest_mac[5] );
+        ctcis_log_event( blk, logbuf );
+    }
+
     obtain_lock( &blk->SlirpLock );
     slirp_input( blk->slirp, reply, sizeof( reply ) );
     release_lock( &blk->SlirpLock );
@@ -385,10 +554,14 @@ static ssize_t ctcis_send_packet( const void* pkt, size_t pkt_len, void* opaque 
     if (ctcis_enqueue_ip_packet( blk, ip, iplen ) != 0)
     {
         if (errno == EMSGSIZE)
+        {
             WRMSG( HHC00914, "W", SSID_TO_LCSS( dev->ssid ), dev->devnum );
+            ctcis_log_event( blk, "\"ev\":\"error\",\"msg\":\"packet frame too big, dropped\"" );
+        }
         return -1;
     }
 
+    ctcis_log_packet( blk, "out", ip, iplen );
     return (ssize_t)pkt_len;
 }
 
@@ -565,6 +738,19 @@ int CTCIS_Init( DEVBLK* dev, int argc, char *argv[] )
     if (ctcis_parse_args( dev, &work, argc, argv ) != 0)
         return -1;
 
+    if (work.logpath[0])
+    {
+        work.logfp = fopen( work.logpath, "a" );
+        if (!work.logfp)
+        {
+            WRMSG( HHC00993, "E", SSID_TO_LCSS( dev->ssid ), dev->devnum,
+                   "CTCIS", work.logpath, strerror( errno ) );
+            return -1;
+        }
+        WRMSG( HHC00992, "I", SSID_TO_LCSS( dev->ssid ), dev->devnum,
+               "CTCIS", work.logpath, work.loglevel );
+    }
+
     blk = malloc( sizeof( CTCISBLK ) );
     if (!blk)
     {
@@ -648,6 +834,16 @@ int CTCIS_Init( DEVBLK* dev, int argc, char *argv[] )
         WRMSG( HHC00988, "I", SSID_TO_LCSS( dev->ssid ), dev->devnum,
                "CTCIS", f->is_udp ? "udp" : "tcp", hbuf, (unsigned)f->host_port,
                gbuf, (unsigned)f->guest_port );
+
+        if (blk->logfp)
+        {
+            char logbuf[256];
+            snprintf( logbuf, sizeof( logbuf ),
+                "\"ev\":\"fwd\",\"proto\":\"%s\",\"host\":\"%s:%u\",\"guest\":\"%s:%u\"",
+                f->is_udp ? "udp" : "tcp", hbuf, (unsigned)f->host_port,
+                gbuf, (unsigned)f->guest_port );
+            ctcis_log_event( blk, logbuf );
+        }
     }
 
     blk->pDEVBLK[CTC_READ_SUBCHANN]->fd = blk->wakefd[0];
@@ -705,6 +901,12 @@ int CTCIS_Close( DEVBLK* dev )
         blk->timers = next;
     }
 
+    if (blk->logfp)
+    {
+        fclose( blk->logfp );
+        blk->logfp = NULL;
+    }
+
     if (blk->wakefd[0] >= 0)
         close_pipe( blk->wakefd[0] );
     if (blk->wakefd[1] >= 0)
@@ -734,8 +936,14 @@ void CTCIS_Query( DEVBLK* dev, char** class, int buflen, char* buffer )
 
     STRLCPY( guest, inet_ntoa( blk->guest_addr ) );
     STRLCPY( gateway, inet_ntoa( blk->gateway_addr ) );
-    snprintf( buffer, buflen, "CTCIS %s/%s libslirp%s IO[%"PRIu64"]",
-              guest, gateway, blk->fDebug ? " -d" : "", dev->excps );
+
+    if (blk->logfp)
+        snprintf( buffer, buflen, "CTCIS %s/%s libslirp%s log=%s(%d) IO[%"PRIu64"]",
+                  guest, gateway, blk->fDebug ? " -d" : "",
+                  blk->logpath, blk->loglevel, dev->excps );
+    else
+        snprintf( buffer, buflen, "CTCIS %s/%s libslirp%s IO[%"PRIu64"]",
+                  guest, gateway, blk->fDebug ? " -d" : "", dev->excps );
     buffer[buflen - 1] = '\0';
 }
 
@@ -1017,6 +1225,8 @@ static void CTCIS_Write( DEVBLK* dev, U32 count, BYTE* buf, BYTE* unitstat,
         slirp_input( blk->slirp, ethbuf, ethlen );
         release_lock( &blk->SlirpLock );
 
+        ctcis_log_packet( blk, "in", seg->bData, datalen );
+
         *residual -= seglen;
     }
 
@@ -1188,11 +1398,13 @@ static int ctcis_parse_args( DEVBLK* dev, PCTCISBLK blk, int argc, char** argx )
             { "bind",    required_argument, NULL, 'b' },
             { "mtu",     required_argument, NULL, 't' },
             { "debug",   no_argument,       NULL, 'd' },
+            { "log",     required_argument, NULL, 'l' },
+            { "loglevel",required_argument, NULL, 'L' },
             { NULL,      0,                 NULL,  0  }
         };
-        c = getopt_long( argc, argv, "p:a:g:s:n:r:b:t:d", options, &optidx );
+        c = getopt_long( argc, argv, "p:a:g:s:n:r:b:t:l:L:d", options, &optidx );
 #else
-        c = getopt( argc, argv, "p:a:g:s:n:r:b:t:d" );
+        c = getopt( argc, argv, "p:a:g:s:n:r:b:t:l:L:d" );
 #endif
         if (c == -1)
             break;
@@ -1236,6 +1448,17 @@ static int ctcis_parse_args( DEVBLK* dev, PCTCISBLK blk, int argc, char** argx )
             if (i < 46 || i > 65535)
                 goto bad_opt;
             blk->sMTU = i;
+            break;
+        case 'l':
+            STRLCPY( blk->logpath, optarg );
+            if (blk->loglevel == 0)
+                blk->loglevel = 1;
+            break;
+        case 'L':
+            i = atoi( optarg );
+            if (i < 1 || i > 3)
+                goto bad_opt;
+            blk->loglevel = i;
             break;
         case 'd':
             blk->fDebug = 1;

@@ -885,7 +885,9 @@ LOGM_DLL_IMPORT int  panel_command_capture( char* cmd, char** resp, bool quiet )
 #define HHC00989 "%1d:%04X %s: host forward %s %s:%u failed: %s"
 #define HHC00990 "%1d:%04X %s: dropping %s packet of size %u"
 #define HHC00991 "%1d:%04X %s: slirp timer error: %s"
-//efine HHC00992 - HHC00999 (available)
+#define HHC00992 "%1d:%04X %s: JSON log opened: %s (level %d)"
+#define HHC00993 "%1d:%04X %s: JSON log error: %s: %s"
+//efine HHC00994 - HHC00999 (available)
 
 // reserve 010xx for communication adapter specific component messages
 #define HHC01000 "%1d:%04X COMM: error in function %s: %s"

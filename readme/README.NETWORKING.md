@@ -44,6 +44,7 @@ The currently supported emulation modes are:
 CTCT     - CTCA Emulation via TCP connection
 CTCE     - Enhanced CTCA Emulation via TCP connection
 CTCI     - Point-to-point connection to the host IP stack.
+CTCIS    - Userspace NAT via libslirp (no TUN/TAP, no root).
 LCS      - LAN Channel Station (3172/OSA)
 PTP      - Point-to-point connection to the host IP stack.
 OSA      - Open Systems Adapter
@@ -202,7 +203,6 @@ If no Address Translation file is specified, the emulation module will create th
 
 *     An ethernet adapter (port 0) for TCP/IP traffic only.
 *     Two device addresses will be defined (devnum and devnum + 1).
-
 
 The syntax for the Address Translation file is as follows:
 
@@ -494,6 +494,118 @@ The TUN interface could then be used with a PTP specified as:-
 ```
     E20-E21 PTP tun99
 ```
+
+### CTCIS - Userspace NAT via libslirp
+
+This mode provides CTC networking via the [libslirp](https://gitlab.freedesktop.org/slirp/libslirp) userspace NAT library. Unlike CTCI, LCS, or PTP, CTCIS does not require a TUN/TAP interface, does not require root or elevated privileges, and works out of the box on macOS, Linux, and other platforms where libslirp is available.
+
+CTCIS emulates a point-to-point CTC adapter that carries raw IP traffic. Internally it bridges the IP-only CTC framing to libslirp's Ethernet-level NAT stack. Port forwarding allows the guest operating system to accept inbound connections from the host.
+
+The configuration statement for CTCIS is as follows:
+
+```
+<devnum1-devnum2> CTCIS [options]
+```
+
+where:
+
+```
+<devnum1-devnum2>   is the address pair of the CTCIS device.
+                    This pair must be an even-odd address.
+
+[options]  can be any of the following:
+
+     -p <fwd> or --port <fwd>
+
+         Defines a port forwarding rule.  <fwd> is in the format:
+             proto:hostport:guestport
+         or the extended format:
+             proto:hostaddr:hostport:guestaddr:guestport
+
+         where proto is "tcp" or "udp".  Multiple -p options can
+         be specified to forward multiple ports.
+
+         Examples:
+             -p tcp:2121:21       Forward host 2121 to guest 21
+             -p tcp:127.0.0.1:2323:10.0.2.15:23
+             -p udp:1053:53
+
+     -a <addr> or --addr <addr>
+
+         where <addr> is the IP address assigned to the guest.
+         Default: 10.0.2.15
+
+     -g <addr> or --gateway <addr>
+
+         where <addr> is the gateway (host-side) IP address
+         as seen by the guest.  Default: 10.0.2.2
+
+     -s <mask> or --netmask <mask>
+
+         where <mask> is the network mask.  Default: 255.255.255.0
+
+     -n <addr> or --net <addr>
+
+         where <addr> is the virtual network address.
+         Default: 10.0.2.0
+
+     -r <addr> or --dns <addr>
+
+         where <addr> is the DNS server address as seen by the guest.
+         Default: 10.0.2.3
+
+     -b <addr> or --bind <addr>
+
+         where <addr> is the host address on which port forwards
+         listen.  Default: 127.0.0.1
+
+     -t <mtu> or --mtu <mtu>
+
+         where <mtu> is the maximum transmission unit size (46-65535).
+         Default: 1500
+
+     -l <path> or --log <path>
+
+         where <path> is a file path for JSON-lines traffic logging
+         (opened in append mode).  If specified without --loglevel,
+         the default level is 1.
+
+     -L <level> or --loglevel <level>
+
+         where <level> is the logging verbosity (1-3):
+
+         1 - Connection events and errors only:
+             {"ts":"...","ev":"arp","guest":"10.0.2.15","mac":"52:54:00:12:34:56"}
+             {"ts":"...","ev":"fwd","proto":"tcp","host":"127.0.0.1:2121","guest":"10.0.2.15:21"}
+             {"ts":"...","ev":"error","msg":"packet frame too big, dropped"}
+
+         2 - Per-packet metadata (no payload):
+             {"ts":"...","ev":"pkt","dir":"out","proto":"tcp","src":"...","dst":"...","flags":"SYN","seq":1000,"ack":0,"len":0}
+
+         3 - Per-packet metadata plus hex-encoded payload:
+             {"ts":"...","ev":"pkt","dir":"in","proto":"tcp",...,"data":"48454c4c4f"}
+
+     -d or --debug
+
+         this will turn on the internal Hercules debugging routines.
+         Warning: This produces a large amount of output to the
+         Hercules console.
+```
+
+A typical configuration example:
+
+```
+# Basic CTCIS with FTP port forwarding:
+0E20.2    CTCIS    -p tcp:2121:21
+
+# With JSON traffic logging at metadata level:
+0E20.2    CTCIS    -p tcp:2121:21 -l /tmp/ctcis.jsonl -L 2
+
+# Multiple port forwards with custom guest address:
+0E20.2    CTCIS    -a 10.0.2.100 -p tcp:2323:23 -p tcp:2121:21 -p udp:1053:53
+```
+
+Note: CTCIS requires Hercules to be built with libslirp support (`--enable-slirp` at configure time or automatic detection via `pkg-config`).
 
 ### OSA - Open Systems Adapter
 

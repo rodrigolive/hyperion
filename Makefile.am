@@ -1173,7 +1173,6 @@ noinst_HEADERS =          \
 #
 ###############################################################################
 
-
 cckd:                   \
 	cckdcdsk$(EXEEXT)   \
 	cckdcomp$(EXEEXT)   \
@@ -1361,7 +1360,4 @@ endif
 	@echo '  $$tapetools_ADDLIBS   $(tapetools_ADDLIBS)'
 	@echo '  $$tools_LD_FLAGS      $(tools_LD_FLAGS)'
 	@echo '  $$XSTATIC             $(XSTATIC)'
-
-
-
 
