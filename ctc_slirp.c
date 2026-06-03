@@ -302,6 +302,57 @@ static void ctcis_guest_error( const char* msg, void* opaque )
            dev->typname, msg ? msg : "unknown" );
 }
 
+/* Respond to ARP requests from libslirp for the guest IP.
+   CTC is a point-to-point IP link (no Ethernet/ARP), but libslirp
+   operates at Ethernet level and must ARP-resolve the guest before
+   it will forward any IP traffic.  We synthesize an ARP reply so
+   that libslirp populates its ARP cache and starts sending IP.      */
+static void ctcis_handle_arp( PCTCISBLK blk, const BYTE* pkt, size_t len )
+{
+    BYTE reply[42];
+    const BYTE* arp;
+    U16 op;
+
+    /* Minimum ARP over Ethernet: 14-byte eth + 28-byte ARP = 42 */
+    if (len < 42)
+        return;
+
+    arp = pkt + CTCIS_ETH_HDR_SIZE;      /* start of ARP header */
+
+    /* Validate: hw=Ethernet(1), proto=IPv4(0x0800), hw_size=6, proto_size=4 */
+    if (arp[0] != 0 || arp[1] != 1 ||    /* HTYPE = Ethernet */
+        arp[2] != 0x08 || arp[3] != 0 ||  /* PTYPE = IPv4     */
+        arp[4] != 6 || arp[5] != 4)       /* HLEN=6, PLEN=4   */
+        return;
+
+    op = ((U16)arp[6] << 8) | arp[7];
+    if (op != 1)                          /* must be ARP REQUEST (op=1) */
+        return;
+
+    /* Target IP is at arp+24 (4 bytes).  Only reply for our guest addr. */
+    if (memcmp( arp + 24, &blk->guest_addr.s_addr, 4 ) != 0)
+        return;
+
+    /* Build ARP reply: Ethernet header */
+    memcpy( reply, pkt + 6, 6 );          /* dst MAC = sender's MAC     */
+    memcpy( reply + 6, blk->guest_mac, 6 );  /* src MAC = guest MAC     */
+    reply[12] = 0x08; reply[13] = 0x06;   /* EtherType = ARP            */
+
+    /* ARP payload */
+    reply[14] = 0; reply[15] = 1;         /* HTYPE = Ethernet           */
+    reply[16] = 0x08; reply[17] = 0;      /* PTYPE = IPv4               */
+    reply[18] = 6; reply[19] = 4;         /* HLEN=6, PLEN=4             */
+    reply[20] = 0; reply[21] = 2;         /* OPER = REPLY (2)           */
+    memcpy( reply + 22, blk->guest_mac, 6 );  /* sender MAC = guest MAC */
+    memcpy( reply + 28, &blk->guest_addr.s_addr, 4 ); /* sender IP = guest */
+    memcpy( reply + 32, arp + 8, 6 );     /* target MAC = requester MAC */
+    memcpy( reply + 38, arp + 14, 4 );    /* target IP  = requester IP  */
+
+    obtain_lock( &blk->SlirpLock );
+    slirp_input( blk->slirp, reply, sizeof( reply ) );
+    release_lock( &blk->SlirpLock );
+}
+
 static ssize_t ctcis_send_packet( const void* pkt, size_t pkt_len, void* opaque )
 {
     PCTCISBLK blk = (PCTCISBLK) opaque;
@@ -313,7 +364,16 @@ static ssize_t ctcis_send_packet( const void* pkt, size_t pkt_len, void* opaque 
         return -1;
 
     if (ctcis_extract_ipv4_from_eth( blk, pkt, pkt_len, &ip, &iplen ) != 0)
+    {
+        /* If it's an ARP request for our guest, reply to it */
+        if (pkt_len >= 14)
+        {
+            U16 etype = ((U16)((const BYTE*)pkt)[12] << 8) | ((const BYTE*)pkt)[13];
+            if (etype == ETH_TYPE_ARP)
+                ctcis_handle_arp( blk, (const BYTE*)pkt, pkt_len );
+        }
         return (ssize_t)pkt_len;
+    }
 
     if (blk->fDebug)
     {
