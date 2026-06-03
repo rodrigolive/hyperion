@@ -39,6 +39,7 @@ autoconf/compile
 /config.h.in~
 /config.status
 /convto64
+/ctc_slirp_test
 /dasdcat
 /dasdconv
 /dasdconv64
