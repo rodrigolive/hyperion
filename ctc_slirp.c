@@ -237,12 +237,23 @@ static int ctcis_timer_timeout( PCTCISBLK blk )
 static int ctcis_add_poll( int fd, int events, void* opaque )
 {
     CTCISPOLLCTX* ctx = (CTCISPOLLCTX*) opaque;
+    short poll_events = 0;
 
     if (ctx->nfds >= CTCIS_MAX_POLLFD)
         return -1;
 
+    /* Translate SLIRP_POLL_* flags to POSIX POLL* flags.
+       SLIRP_POLL_OUT (2) != POLLOUT (4) — they are swapped
+       with SLIRP_POLL_PRI (4) != POLLPRI (2).               */
+    if (events & SLIRP_POLL_IN)
+        poll_events |= POLLIN;
+    if (events & SLIRP_POLL_OUT)
+        poll_events |= POLLOUT;
+    if (events & SLIRP_POLL_PRI)
+        poll_events |= POLLPRI;
+
     ctx->fds[ctx->nfds].fd = fd;
-    ctx->fds[ctx->nfds].events = events;
+    ctx->fds[ctx->nfds].events = poll_events;
     ctx->fds[ctx->nfds].revents = 0;
     return ctx->nfds++;
 }
@@ -250,11 +261,27 @@ static int ctcis_add_poll( int fd, int events, void* opaque )
 static int ctcis_get_revents( int idx, void* opaque )
 {
     CTCISPOLLCTX* ctx = (CTCISPOLLCTX*) opaque;
+    short revents;
+    int slirp_revents = 0;
 
     if (idx < 0 || idx >= ctx->nfds)
         return 0;
 
-    return ctx->fds[idx].revents;
+    /* Translate POSIX POLL* flags back to SLIRP_POLL_* flags */
+    revents = ctx->fds[idx].revents;
+
+    if (revents & POLLIN)
+        slirp_revents |= SLIRP_POLL_IN;
+    if (revents & POLLOUT)
+        slirp_revents |= SLIRP_POLL_OUT;
+    if (revents & POLLPRI)
+        slirp_revents |= SLIRP_POLL_PRI;
+    if (revents & POLLERR)
+        slirp_revents |= SLIRP_POLL_ERR;
+    if (revents & POLLHUP)
+        slirp_revents |= SLIRP_POLL_HUP;
+
+    return slirp_revents;
 }
 
 static void ctcis_notify( void* opaque )
